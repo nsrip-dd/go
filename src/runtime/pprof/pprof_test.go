@@ -1230,6 +1230,50 @@ func TestMutexProfile(t *testing.T) {
 	})
 }
 
+func TestMutexProfileChangeRate(t *testing.T) {
+	old := runtime.SetMutexProfileFraction(1)
+	defer runtime.SetMutexProfileFraction(old)
+
+	countcontentions := func() int64 {
+		var w bytes.Buffer
+		Lookup("mutex").WriteTo(&w, 0)
+		p, err := profile.Parse(&w)
+		if err != nil {
+			t.Fatalf("failed to parse profile: %v", err)
+		}
+		t.Logf("parsed proto: %s", p)
+		if err := p.CheckValid(); err != nil {
+			t.Fatalf("invalid profile: %v", err)
+		}
+
+		var count int64
+		for _, s := range p.Sample {
+			count += s.Value[0]
+		}
+		return count
+	}
+
+	original := countcontentions()
+	newrate := 2
+	for i := 0; i < newrate*50; i++ {
+		blockMutex(t)
+	}
+	before := countcontentions() - original
+	runtime.SetMutexProfileFraction(newrate)
+	for i := 0; i < 50; i++ {
+		blockMutex(t)
+	}
+	after := countcontentions() - original
+
+	// We shouldn't get more than twice as many contentions reported after
+	// than we got before. If we adjust the contentions by the sampling
+	// probability 1/newrate, then we expect at most 50*newrate additional
+	// contentions from the second set of blockMutex calls.
+	if after > 2*before {
+		t.Fatalf("contentions changed from %d to %d", before, after)
+	}
+}
+
 func func1(c chan int) { <-c }
 func func2(c chan int) { <-c }
 func func3(c chan int) { <-c }

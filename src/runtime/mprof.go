@@ -432,8 +432,8 @@ func saveblockevent(cycles, rate int64, skip int, which bucketType) {
 		b.bp().count += float64(rate) / float64(cycles)
 		b.bp().cycles += rate
 	} else {
-		b.bp().count++
-		b.bp().cycles += cycles
+		b.bp().count += float64(rate)
+		b.bp().cycles += rate * cycles
 	}
 	unlock(&proflock)
 }

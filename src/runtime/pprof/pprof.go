@@ -907,8 +907,7 @@ func writeProfileInternal(w io.Writer, debug int, name string, runtimeProfile fu
 }
 
 func scaleMutexProfile(cnt int64, ns float64) (int64, float64) {
-	period := runtime.SetMutexProfileFraction(-1)
-	return cnt * int64(period), ns * float64(period)
+	return cnt, ns
 }
 
 func runtime_cyclesPerSecond() int64
