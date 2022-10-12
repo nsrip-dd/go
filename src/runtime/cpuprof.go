@@ -19,7 +19,11 @@ import (
 )
 
 const (
-	maxCPUProfStack = 64
+	// maxCPUProfStack is the maximum number of frames that can be recorded
+	// in a call stack by the CPU profiler. This limit must not be too
+	// large, or the CPU profile signal handler won't have enough space on
+	// its stack
+	maxCPUProfStack = 512
 
 	// profBufWordCount is the size of the CPU profile buffer's storage for the
 	// header and stack of each sample, measured in 64-bit words. Every sample
