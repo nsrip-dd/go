@@ -32,6 +32,9 @@ func runtime_setProfLabel(labels unsafe.Pointer) {
 		racereleasemerge(unsafe.Pointer(&labelSync))
 	}
 	getg().labels = labels
+	if trace.enabled {
+		traceGoroutineLabels(getg())
+	}
 }
 
 //go:linkname runtime_getProfLabel runtime/pprof.runtime_getProfLabel

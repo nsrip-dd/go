@@ -71,7 +71,8 @@ const (
 	traceEvUserRegion        = 47 // trace.WithRegion [timestamp, internal task id, mode(0:start, 1:end), stack, name string]
 	traceEvUserLog           = 48 // trace.Log [timestamp, internal task id, key string id, stack, value string]
 	traceEvCPUSample         = 49 // CPU profiling sample [timestamp, stack, real timestamp, real P id (-1 when absent), goroutine id]
-	traceEvCount             = 50
+	traceEvGoroutineLabels   = 50 // goroutine has labels applied [timestamp, goroutine id, label key and value string ids]
+	traceEvCount             = 51
 	// Byte is used but only 6 bits are available for event type.
 	// The remaining 2 bits are used to specify the number of arguments.
 	// That means, the max event type value is 63.
@@ -303,6 +304,12 @@ func StartTrace() error {
 	trace.stringSeq = 0
 	trace.strings = make(map[string]uint64)
 
+	// Goroutines which existed before tracing started can have labels, so
+	// make sure that those labels are captured in the event stream
+	forEachGRace(func(gp *g) {
+		traceGoroutineLabels(gp)
+	})
+
 	trace.seqGC = 0
 	mp.startingtrace = false
 	trace.enabled = true
@@ -510,7 +517,7 @@ func readTrace0() (buf []byte, park bool) {
 		trace.headerWritten = true
 		trace.lockOwner = nil
 		unlock(&trace.lock)
-		return []byte("go 1.19 trace\x00\x00\x00"), false
+		return []byte("go 1.20 trace\x00\x00\x00"), false
 	}
 	// Optimistically look for CPU profile samples. This may write new stack
 	// records, and may write new tracing buffers.
@@ -870,6 +877,49 @@ func traceReadCPU() {
 			traceEventLocked(0, nil, 0, bufp, traceEvCPUSample, stackID, 1, timestamp/traceTickDiv, ppid, goid)
 		}
 	}
+}
+
+// traceGoroutineLabels records each of the key-value profile label pairs for gp
+func traceGoroutineLabels(gp *g) {
+	// Duplicated definition of the same type in runtime/pprof
+	type labelMap map[string]string
+
+	// The goroutine may be assigned 0 labels if the user sets labels,
+	// performs an action, and then restores the previous (possibly empty)
+	// label set. See pprof.Do
+	var m labelMap
+	if gp.labels != nil {
+		m = *(*labelMap)(gp.labels)
+	}
+
+	mp, pid, bufp := traceAcquireBuffer()
+	defer traceReleaseBuffer(pid)
+	// see traceEvent comment, we need to double-check that tracing hasn't
+	// been disabled
+	if !trace.enabled && !mp.startingtrace {
+		return
+	}
+	// We don't need an event for goroutines which had no labels when the trace
+	// was started
+	if mp.startingtrace && len(m) == 0 {
+		return
+	}
+	args := make([]uint64, 0, 1+2*len(m))
+	args = append(args, gp.goid)
+	for k, v := range m {
+		var key, value uint64
+		key, bufp = traceString(bufp, pid, k)
+		value, bufp = traceString(bufp, pid, v)
+		args = append(args, key, value)
+	}
+	skip := 3
+	if mp.startingtrace {
+		// At the start of tracing, the stack would just be where the
+		// trace started, not where the label was set. Omit it in that
+		// case.
+		skip = 0
+	}
+	traceEventLocked(0, mp, pid, bufp, traceEvGoroutineLabels, 0, skip, args...)
 }
 
 func traceStackID(mp *m, buf []uintptr, skip int) uint64 {
