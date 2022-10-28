@@ -296,7 +296,7 @@ func cgocallbackg1(fn, frame unsafe.Pointer, ctxt uintptr) {
 	// run Go code does not use runtime.execute, so bypasses the check there.
 	hz := sched.profilehz
 	if gp.m.profilehz != hz {
-		setThreadCPUProfiler(hz)
+		initThreadCPUProfiler(gp.m, hz)
 	}
 
 	// Add entry to defer stack in case of panic.

@@ -2639,7 +2639,7 @@ func execute(gp *g, inheritTime bool) {
 	// Check whether the profiler needs to be turned on or off.
 	hz := sched.profilehz
 	if mp.profilehz != hz {
-		setThreadCPUProfiler(hz)
+		initThreadCPUProfiler(mp, hz)
 	}
 
 	if trace.enabled {
@@ -4656,6 +4656,15 @@ func sigprof(pc, sp, lr uintptr, gp *g, mp *m) {
 		return
 	}
 
+	// TODO: Is this check needed? Any path where initThreadCPUProfiler is
+	// called should have set this up for mp, so the question is whether
+	// that will have happened before sigprof is called and uses mp.
+	// We do check that mp.profilehz != 0 above. Is that a sufficient signal
+	// that initThreadCPUProfiler is done and mp.profileStack is set up?
+	if mp.profileStack == nil {
+		return
+	}
+
 	// On mips{,le}/arm, 64bit atomics are emulated with spinlocks, in
 	// runtime/internal/atomic. If SIGPROF arrives while the program is inside
 	// the critical section, it creates a deadlock (when writing the sample).
@@ -4686,7 +4695,12 @@ func sigprof(pc, sp, lr uintptr, gp *g, mp *m) {
 	// See golang.org/issue/17165.
 	getg().m.mallocing++
 
-	var stk [maxCPUProfStack]uintptr
+	// TODO: See above comment - which m do we check for the profile stack?
+	// Is it mp, or getg().m? I think this should be ok since this function
+	// earlier checks mp.profilehz, meaning profiling was enabled for mp.
+	// This is mainly complicated because Windows profiling works differently,
+	// and mp isn't necessarily the m doing the profiling
+	stk := mp.profileStack
 	n := 0
 	if mp.ncgo > 0 && mp.curg != nil && mp.curg.syscallpc != 0 && mp.curg.syscallsp != 0 {
 		cgoOff := 0
@@ -4765,6 +4779,17 @@ func sigprof(pc, sp, lr uintptr, gp *g, mp *m) {
 	getg().m.mallocing--
 }
 
+func initThreadCPUProfiler(mp *m, hz int32) {
+	if mp.profileStack == nil {
+		// TODO(nick): Is this safe on Windows? setThreadCPUProfiler
+		// updates mp.profilehz atomically for windows, which makes me
+		// wonder if this function will be called concurrently with
+		// other changes to mp?
+		mp.profileStack = make([]uintptr, maxCPUProfStack)
+	}
+	setThreadCPUProfiler(hz)
+}
+
 // setcpuprofilerate sets the CPU profiling rate to hz times per second.
 // If hz <= 0, setcpuprofilerate turns off CPU profiling.
 func setcpuprofilerate(hz int32) {
@@ -4797,7 +4822,7 @@ func setcpuprofilerate(hz int32) {
 	unlock(&sched.lock)
 
 	if hz != 0 {
-		setThreadCPUProfiler(hz)
+		initThreadCPUProfiler(gp.m, hz)
 	}
 
 	gp.m.locks--
