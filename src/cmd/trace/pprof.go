@@ -49,9 +49,10 @@ func init() {
 
 // Record represents one entry in pprof-like profiles.
 type Record struct {
-	stk  []*trace.Frame
-	n    uint64
-	time int64
+	stk    []*trace.Frame
+	n      uint64
+	time   int64
+	labels map[string][]string
 }
 
 // interval represents a time interval in the trace.
@@ -172,89 +173,29 @@ func pprofMatchingRegions(filter *regionFilter) (map[uint64][]interval, error) {
 
 // computePprofIO generates IO pprof-like profile (time spent in IO wait, currently only network blocking event).
 func computePprofIO(w io.Writer, gToIntervals map[uint64][]interval, events []*trace.Event) error {
-	prof := make(map[uint64]Record)
-	for _, ev := range events {
-		if ev.Type != trace.EvGoBlockNet || ev.Link == nil || ev.StkID == 0 || len(ev.Stk) == 0 {
-			continue
-		}
-		overlapping := pprofOverlappingDuration(gToIntervals, ev)
-		if overlapping > 0 {
-			rec := prof[ev.StkID]
-			rec.stk = ev.Stk
-			rec.n++
-			rec.time += overlapping.Nanoseconds()
-			prof[ev.StkID] = rec
-		}
-	}
-	return buildProfile(prof).Write(w)
+	return buildProfileFromEvents(w, gToIntervals, events, trace.EvGoBlockNet)
 }
 
 // computePprofBlock generates blocking pprof-like profile (time spent blocked on synchronization primitives).
 func computePprofBlock(w io.Writer, gToIntervals map[uint64][]interval, events []*trace.Event) error {
-	prof := make(map[uint64]Record)
-	for _, ev := range events {
-		switch ev.Type {
-		case trace.EvGoBlockSend, trace.EvGoBlockRecv, trace.EvGoBlockSelect,
-			trace.EvGoBlockSync, trace.EvGoBlockCond, trace.EvGoBlockGC:
-			// TODO(hyangah): figure out why EvGoBlockGC should be here.
-			// EvGoBlockGC indicates the goroutine blocks on GC assist, not
-			// on synchronization primitives.
-		default:
-			continue
-		}
-		if ev.Link == nil || ev.StkID == 0 || len(ev.Stk) == 0 {
-			continue
-		}
-		overlapping := pprofOverlappingDuration(gToIntervals, ev)
-		if overlapping > 0 {
-			rec := prof[ev.StkID]
-			rec.stk = ev.Stk
-			rec.n++
-			rec.time += overlapping.Nanoseconds()
-			prof[ev.StkID] = rec
-		}
-	}
-	return buildProfile(prof).Write(w)
+	return buildProfileFromEvents(w, gToIntervals, events,
+		trace.EvGoBlockSend, trace.EvGoBlockRecv, trace.EvGoBlockSelect,
+		trace.EvGoBlockSync, trace.EvGoBlockCond, trace.EvGoBlockGC,
+		// TODO(hyangah): figure out why EvGoBlockGC should be here.
+		// EvGoBlockGC indicates the goroutine blocks on GC assist, not
+		// on synchronization primitives.
+	)
 }
 
 // computePprofSyscall generates syscall pprof-like profile (time spent blocked in syscalls).
 func computePprofSyscall(w io.Writer, gToIntervals map[uint64][]interval, events []*trace.Event) error {
-	prof := make(map[uint64]Record)
-	for _, ev := range events {
-		if ev.Type != trace.EvGoSysCall || ev.Link == nil || ev.StkID == 0 || len(ev.Stk) == 0 {
-			continue
-		}
-		overlapping := pprofOverlappingDuration(gToIntervals, ev)
-		if overlapping > 0 {
-			rec := prof[ev.StkID]
-			rec.stk = ev.Stk
-			rec.n++
-			rec.time += overlapping.Nanoseconds()
-			prof[ev.StkID] = rec
-		}
-	}
-	return buildProfile(prof).Write(w)
+	return buildProfileFromEvents(w, gToIntervals, events, trace.EvGoSysCall)
 }
 
 // computePprofSched generates scheduler latency pprof-like profile
 // (time between a goroutine become runnable and actually scheduled for execution).
 func computePprofSched(w io.Writer, gToIntervals map[uint64][]interval, events []*trace.Event) error {
-	prof := make(map[uint64]Record)
-	for _, ev := range events {
-		if (ev.Type != trace.EvGoUnblock && ev.Type != trace.EvGoCreate) ||
-			ev.Link == nil || ev.StkID == 0 || len(ev.Stk) == 0 {
-			continue
-		}
-		overlapping := pprofOverlappingDuration(gToIntervals, ev)
-		if overlapping > 0 {
-			rec := prof[ev.StkID]
-			rec.stk = ev.Stk
-			rec.n++
-			rec.time += overlapping.Nanoseconds()
-			prof[ev.StkID] = rec
-		}
-	}
-	return buildProfile(prof).Write(w)
+	return buildProfileFromEvents(w, gToIntervals, events, trace.EvGoUnblock, trace.EvGoCreate)
 }
 
 // pprofOverlappingDuration returns the overlapping duration between
@@ -326,7 +267,7 @@ func serveSVGProfile(prof func(w io.Writer, r *http.Request) error) http.Handler
 	}
 }
 
-func buildProfile(prof map[uint64]Record) *profile.Profile {
+func buildProfile(prof map[uint64][]*Record) *profile.Profile {
 	p := &profile.Profile{
 		PeriodType: &profile.ValueType{Type: "trace", Unit: "count"},
 		Period:     1,
@@ -337,41 +278,123 @@ func buildProfile(prof map[uint64]Record) *profile.Profile {
 	}
 	locs := make(map[uint64]*profile.Location)
 	funcs := make(map[string]*profile.Function)
-	for _, rec := range prof {
-		var sloc []*profile.Location
-		for _, frame := range rec.stk {
-			loc := locs[frame.PC]
-			if loc == nil {
-				fn := funcs[frame.File+frame.Fn]
-				if fn == nil {
-					fn = &profile.Function{
-						ID:         uint64(len(p.Function) + 1),
-						Name:       frame.Fn,
-						SystemName: frame.Fn,
-						Filename:   frame.File,
+	for _, recs := range prof {
+		for _, r := range recs {
+			var sloc []*profile.Location
+			for _, frame := range r.stk {
+				loc := locs[frame.PC]
+				if loc == nil {
+					fn := funcs[frame.File+frame.Fn]
+					if fn == nil {
+						fn = &profile.Function{
+							ID:         uint64(len(p.Function) + 1),
+							Name:       frame.Fn,
+							SystemName: frame.Fn,
+							Filename:   frame.File,
+						}
+						p.Function = append(p.Function, fn)
+						funcs[frame.File+frame.Fn] = fn
 					}
-					p.Function = append(p.Function, fn)
-					funcs[frame.File+frame.Fn] = fn
-				}
-				loc = &profile.Location{
-					ID:      uint64(len(p.Location) + 1),
-					Address: frame.PC,
-					Line: []profile.Line{
-						{
-							Function: fn,
-							Line:     int64(frame.Line),
+					loc = &profile.Location{
+						ID:      uint64(len(p.Location) + 1),
+						Address: frame.PC,
+						Line: []profile.Line{
+							{
+								Function: fn,
+								Line:     int64(frame.Line),
+							},
 						},
-					},
+					}
+					p.Location = append(p.Location, loc)
+					locs[frame.PC] = loc
 				}
-				p.Location = append(p.Location, loc)
-				locs[frame.PC] = loc
+				sloc = append(sloc, loc)
 			}
-			sloc = append(sloc, loc)
+			p.Sample = append(p.Sample, &profile.Sample{
+				Value:    []int64{int64(r.n), r.time},
+				Location: sloc,
+				Label:    r.labels,
+			})
 		}
-		p.Sample = append(p.Sample, &profile.Sample{
-			Value:    []int64{int64(rec.n), rec.time},
-			Location: sloc,
-		})
 	}
 	return p
+}
+
+// labelMap tracks the labels for goroutines
+type labelMap map[uint64]map[string][]string
+
+// update sets the current labels for the goroutine based on the given event,
+// including new labels, inheriting labels, and removing labels when the
+// goroutine ends.
+func (lm labelMap) update(ev *trace.Event) {
+	switch ev.Type {
+	case trace.EvGoroutineLabels:
+		if len(ev.SArgs) == 0 {
+			delete(lm, ev.G)
+		} else {
+			m := make(map[string][]string)
+			for i := 0; i < len(ev.SArgs); i += 2 {
+				m[ev.SArgs[i]] = []string{ev.SArgs[i+1]}
+			}
+			lm[ev.G] = m
+		}
+	case trace.EvGoCreate:
+		if l, ok := lm[ev.G]; ok {
+			lm[ev.Args[0]] = l
+		}
+	case trace.EvGoEnd:
+		delete(lm, ev.G)
+	}
+}
+
+func labelsEqual(a, b map[string][]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		v2, ok := b[k]
+		if !ok {
+			return false
+		}
+		if v[0] != v2[0] {
+			return false
+		}
+	}
+	return true
+}
+
+func buildProfileFromEvents(w io.Writer, gToIntervals map[uint64][]interval, events []*trace.Event, eventTypes ...byte) error {
+	filter := make(map[byte]bool)
+	for _, t := range eventTypes {
+		filter[t] = true
+	}
+	prof := make(map[uint64][]*Record)
+	labels := make(labelMap)
+	for _, ev := range events {
+		labels.update(ev)
+		if !filter[ev.Type] || ev.Link == nil || ev.StkID == 0 || len(ev.Stk) == 0 {
+			continue
+		}
+		overlapping := pprofOverlappingDuration(gToIntervals, ev)
+		if overlapping > 0 {
+			recs := prof[ev.StkID]
+			l := labels[ev.G]
+			var rec *Record
+			for _, r := range recs {
+				if labelsEqual(l, r.labels) {
+					rec = r
+					break
+				}
+			}
+			if rec == nil {
+				rec = new(Record)
+				rec.stk = ev.Stk
+				rec.labels = l
+				prof[ev.StkID] = append(recs, rec)
+			}
+			rec.n++
+			rec.time += overlapping.Nanoseconds()
+		}
+	}
+	return buildProfile(prof).Write(w)
 }
