@@ -47,6 +47,18 @@
 //
 //	go tool pprof http://localhost:6060/debug/pprof/mutex
 //
+// The heap, block, and mutex profiles are accumulated from the start of the
+// process. The seconds parameter can be used to see the change in the sample
+// values over time. By default, the difference is taken for every value in
+// each sample. The delta_value query parameter can be used to select which
+// values in the profile are affected by the seconds parameter. For example,
+//
+//	go tool pprof http://localhost:6060/debug/pprof/heap?seconds=10&delta_value=alloc_space&delta_value=alloc_objects
+//
+// will show the change in alloc_space and alloc_objects over the last 10
+// seconds, while reporting the most recent inuse_space and inuse_objects
+// values.
+//
 // The package also exports a handler that serves execution trace data
 // for the "go tool trace" command. To collect a 5-second execution trace:
 //
@@ -260,6 +272,12 @@ func (name handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (name handler) serveDeltaProfile(w http.ResponseWriter, r *http.Request, p *pprof.Profile, secStr string) {
+	// The delta_value query parameter can be repeated, so we need to call
+	// r.ParseForm to retrieve all of them
+	if err := r.ParseForm(); err != nil {
+		serveError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	sec, err := strconv.ParseInt(secStr, 10, 64)
 	if err != nil || sec <= 0 {
 		serveError(w, http.StatusBadRequest, `invalid value for "seconds" - must be a positive integer`)
@@ -308,7 +326,19 @@ func (name handler) serveDeltaProfile(w http.ResponseWriter, r *http.Request, p 
 	ts := p1.TimeNanos
 	dur := p1.TimeNanos - p0.TimeNanos
 
-	p0.Scale(-1)
+	if values := r.Form["delta_value"]; len(values) > 0 {
+		scales := make([]float64, len(p0.SampleType))
+		for _, v := range values {
+			for i, s := range p0.SampleType {
+				if s.Type == v {
+					scales[i] = -1
+				}
+			}
+		}
+		p0.ScaleN(scales)
+	} else {
+		p0.Scale(-1)
+	}
 
 	p1, err = profile.Merge([]*profile.Profile{p0, p1})
 	if err != nil {
