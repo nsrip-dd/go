@@ -72,7 +72,14 @@ const (
 	// should resume tracing at the user stack when the system stack is
 	// exhausted.
 	unwindJumpStack
+
+	// unwindFramePointer indicates that frame pointers should be used for
+	// unwinding. This does nothing if the platform does not support frame
+	// pointers.
+	unwindFramePointer
 )
+
+const debugUnwinderFramePointerDerivation = true
 
 // An unwinder iterates the physical stack frames of a Go sack.
 //
@@ -212,6 +219,14 @@ func (u *unwinder) initAt(pc0, sp0, lr0 uintptr, gp *g, flags unwindFlags) {
 	}
 	frame.fn = f
 
+	// TODO: if unwindFramePointer is provided but the platform
+	// doesn't support frame pointers (or we have a GODEBUG disabling their use)
+	// then clear the flag. That way the rest of the methods know that seeing
+	// that flag means it's safe to use frame pointers.
+	if flags&unwindFramePointer != 0 && tracefpunwindoff() {
+		flags &^= unwindFramePointer
+	}
+
 	// Populate the unwinder.
 	*u = unwinder{
 		frame:        frame,
@@ -324,7 +339,60 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 				flag &^= abi.FuncFlagSPWrite
 			}
 		}
-		frame.fp = frame.sp + uintptr(funcspdelta(f, frame.pc))
+		if u.flags&unwindFramePointer != 0 && !innermost {
+			// if innermost is true, then we won't have a frame
+			// pointer to follow yet. There's nothing below this
+			// frame on x86 at least. Probably yes on arm though?
+			// Note that "frame pointer" for the stkframe type has a
+			// slightly different meaning than used in "frame
+			// pointer unwinding". For traceback collection, we want
+			// the linked list embedded in the call frames.
+
+			// Refer to stack.go for what the stkframe values, including sp and fp,
+			// mean. They're _not_ the same as the frame pointer linked list whose head
+			// lives in the frame pointer register
+
+			// On amd64, assuming this is not a leaf frame, frame.sp should point to
+			// the bottom of the stack frame, not including where the return address would
+			// go before the call. So we should look two words below frame.sp to find the
+			// frame pointer register.
+			//
+			// On arm64, frame.sp points to the bottom of the stack frame, to where the link
+			// register is stored. The frame pointer register is saved one word below that.
+			//
+			// NB: even though the caller's frame pointer goes in different places in the
+			// frame (top on amd64, below on arm64) we just need to know the bottom of the
+			// caller's stack frame. In either case, the frame pointer _below_ the stack frame
+			// is the one we want. It's confusing...
+			//
+			// The "+ goarch.PtrSize" here started as a fudge-factor to make this calculation
+			// agree with the funcspdelta way of computing frame.fp. It kind of makes sense
+			// if you consider the !usesLR correction below. But it isn't right to do
+			// if the new frame pointer is 0.
+			sp := frame.sp - goarch.PtrSize
+			if !usesLR {
+				sp -= goarch.PtrSize
+			}
+			newFP := *(*uintptr)(unsafe.Pointer(sp))
+			if newFP != 0 {
+				frame.fp = newFP + goarch.PtrSize
+			} else {
+				// If we see frame pointer 0 then we're at the first call. (TODO: true for arm64?)
+				// We want the next frame fp value to be the top of the stack frame,
+				// so we need to fall back to using the stack pointer delta table.
+				frame.fp = frame.sp + uintptr(funcspdelta(f, frame.pc))
+			}
+		} else {
+			frame.fp = frame.sp + uintptr(funcspdelta(f, frame.pc))
+		}
+		if debugUnwinderFramePointerDerivation && u.flags&unwindFramePointer != 0 {
+			spDeltaFP := frame.sp + uintptr(funcspdelta(f, frame.pc))
+			println("got frame pointer", hex(frame.fp), "but wanted", hex(spDeltaFP))
+			if frame.fp != spDeltaFP {
+				breakpoint()
+				throw("bad frame pointer derivation in unwinder")
+			}
+		}
 		if !usesLR {
 			// On x86, call instruction pushes return PC before entering new function.
 			frame.fp += goarch.PtrSize
@@ -448,6 +516,7 @@ func (u *unwinder) next() {
 		u.finishInternal()
 		return
 	}
+
 	flr := findfunc(frame.lr)
 	if !flr.valid() {
 		// This happens if you get a profiling interrupt at just the wrong time.
