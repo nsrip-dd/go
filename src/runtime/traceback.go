@@ -1172,6 +1172,19 @@ func callers(skip int, pcbuf []uintptr) int {
 	return n
 }
 
+func callersFP(skip int, pcbuf []uintptr) int {
+	sp := sys.GetCallerSP()
+	pc := sys.GetCallerPC()
+	gp := getg()
+	var n int
+	systemstack(func() {
+		var u unwinder
+		u.initAt(pc, sp, 0, gp, unwindSilentErrors|unwindFramePointer)
+		n = tracebackPCs(&u, skip, pcbuf)
+	})
+	return n
+}
+
 func gcallers(gp *g, skip int, pcbuf []uintptr) int {
 	var u unwinder
 	u.init(gp, unwindSilentErrors)

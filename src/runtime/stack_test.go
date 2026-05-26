@@ -746,17 +746,21 @@ func testStackWrapperPanic(t *testing.T, cb func(), expect string) {
 			pcs := make([]uintptr, 10)
 			n := Callers(0, pcs)
 			frames := CallersFrames(pcs[:n])
+			found := false
 			for {
 				frame, more := frames.Next()
 				t.Log(frame.Function)
 				if frame.Function == expect {
-					return
+					//return
+					found = true
 				}
 				if !more {
 					break
 				}
 			}
-			t.Fatalf("panicking wrapper %s missing from stack trace", expect)
+			if !found {
+				t.Fatalf("panicking wrapper %s missing from stack trace", expect)
+			}
 		}()
 		cb()
 	})
