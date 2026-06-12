@@ -81,6 +81,8 @@ const (
 
 const debugUnwinderFramePointerDerivation = true
 
+const debugUnwinderFPBoundsCheck = false
+
 // An unwinder iterates the physical stack frames of a Go sack.
 //
 // Typical use of an unwinder looks like:
@@ -339,6 +341,7 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 				flag &^= abi.FuncFlagSPWrite
 			}
 		}
+		var newFP uintptr
 		if u.flags&unwindFramePointer != 0 && !innermost {
 			// if innermost is true, then we won't have a frame
 			// pointer to follow yet. There's nothing below this
@@ -370,11 +373,28 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 			// if you consider the !usesLR correction below. But it isn't right to do
 			// if the new frame pointer is 0.
 			sp := frame.sp - goarch.PtrSize
+
 			if !usesLR {
 				sp -= goarch.PtrSize
 			}
-			newFP := *(*uintptr)(unsafe.Pointer(sp))
-			if newFP != 0 {
+			newFP = *(*uintptr)(unsafe.Pointer(sp))
+			//outsideFrame := newFP > gp.stack.hi || newFP < gp.stack.lo
+			if newFP != 0{
+				if debugUnwinderFPBoundsCheck {
+					onStack := (newFP >= gp.stack.lo && newFP < gp.stack.hi) ||
+							(newFP >= gp.m.g0.stack.lo && newFP < gp.m.g0.stack.hi)
+					if !onStack {
+						spDeltaFP := frame.sp + uintptr(funcspdelta(f, frame.pc))
+						println("frame pointer out of bounds for", funcname(f))
+						println("newFP", hex(newFP), "got", hex(newFP+goarch.PtrSize), "want", hex(spDeltaFP))
+						println("gstack", hex(gp.stack.lo), "-", hex(gp.stack.hi))
+						println("g0stack", hex(gp.m.g0.stack.lo), "-", hex(gp.m.g0.stack.hi))
+						throw("bad frame pointer")
+					}
+				}
+				if (goarch.ArchFamily == goarch.ARM64 && isInjectedCall(f.funcID)) {
+					newFP -= 2 * goarch.PtrSize
+				}
 				frame.fp = newFP + goarch.PtrSize
 			} else {
 				// If we see frame pointer 0 then we're at the first call. (TODO: true for arm64?)
@@ -385,10 +405,23 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 		} else {
 			frame.fp = frame.sp + uintptr(funcspdelta(f, frame.pc))
 		}
+		// println(debugUnwinderFramePointerDerivation, "and", u.flags&unwindFramePointer !=0)
 		if debugUnwinderFramePointerDerivation && u.flags&unwindFramePointer != 0 {
 			spDeltaFP := frame.sp + uintptr(funcspdelta(f, frame.pc))
-			println("got frame pointer", hex(frame.fp), "but wanted", hex(spDeltaFP))
+			d := dlog()
+			d.pc(frame.pc)
+			d.s("got")
+			d.hex(uint64(frame.fp))
+			d.s("want")
+			d.hex(uint64(spDeltaFP))
+			d.s("sp")
+			d.hex(uint64(frame.sp))
+			d.s("newFP")
+			d.hex(uint64(newFP))
+			d.end()
+			
 			if frame.fp != spDeltaFP {
+				println("got frame pointer", hex(frame.fp), "but wanted", hex(spDeltaFP))
 				breakpoint()
 				throw("bad frame pointer derivation in unwinder")
 			}

@@ -189,7 +189,7 @@ func buildTestProg(t *testing.T, binary string, flags ...string) (string, error)
 		exe := filepath.Join(dir, name+".exe")
 
 		start := time.Now()
-		cmd := exec.Command(testenv.GoToolPath(t), append([]string{"build", "-o", exe}, flags...)...)
+		cmd := exec.Command(testenv.GoToolPath(t), append([]string{"build", "-o", exe, "-tags=debuglog"}, flags...)...)
 		t.Logf("running %v", cmd)
 		cmd.Dir = "testdata/" + binary
 		cmd = testenv.CleanCmdEnv(cmd)
