@@ -337,6 +337,7 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 				gp = gp.m.curg
 				u.g.set(gp)
 				frame.sp = gp.sched.sp
+				frame.fp = gp.sched.bp + goarch.PtrSize
 				u.cgoCtxt = len(gp.cgoCtxt) - 1
 				flag &^= abi.FuncFlagSPWrite
 			}
@@ -378,21 +379,13 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 				sp -= goarch.PtrSize
 			}
 			newFP = *(*uintptr)(unsafe.Pointer(sp))
-			//outsideFrame := newFP > gp.stack.hi || newFP < gp.stack.lo
-			if newFP != 0{
-				if debugUnwinderFPBoundsCheck {
-					onStack := (newFP >= gp.stack.lo && newFP < gp.stack.hi) ||
-							(newFP >= gp.m.g0.stack.lo && newFP < gp.m.g0.stack.hi)
-					if !onStack {
-						spDeltaFP := frame.sp + uintptr(funcspdelta(f, frame.pc))
-						println("frame pointer out of bounds for", funcname(f))
-						println("newFP", hex(newFP), "got", hex(newFP+goarch.PtrSize), "want", hex(spDeltaFP))
-						println("gstack", hex(gp.stack.lo), "-", hex(gp.stack.hi))
-						println("g0stack", hex(gp.m.g0.stack.lo), "-", hex(gp.m.g0.stack.hi))
-						throw("bad frame pointer")
-					}
-				}
-				if (goarch.ArchFamily == goarch.ARM64 && isInjectedCall(f.funcID)) {
+			sysStackJump := f.funcID == abi.FuncID_systemstack
+			sysStackCallee := findfunc(*(*uintptr)(unsafe.Pointer(frame.sp)))
+			if sysStackCallee.valid() {
+				sysStackJump = sysStackJump || sysStackCallee.funcID == abi.FuncID_systemstack
+			}
+			if newFP != 0 && !sysStackJump {
+				if goarch.ArchFamily == goarch.ARM64 && isInjectedCall(f.funcID) {
 					newFP -= 2 * goarch.PtrSize
 				}
 				frame.fp = newFP + goarch.PtrSize
@@ -408,6 +401,18 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 		// println(debugUnwinderFramePointerDerivation, "and", u.flags&unwindFramePointer !=0)
 		if debugUnwinderFramePointerDerivation && u.flags&unwindFramePointer != 0 {
 			spDeltaFP := frame.sp + uintptr(funcspdelta(f, frame.pc))
+			// println("unwind frame:", funcname(f),
+			// 	"| pc:", hex(frame.pc),
+			// 	"| sp:", hex(frame.sp),
+			// 	"| fp(ptr):", hex(frame.fp),
+			// 	"| fp(table):", hex(spDeltaFP),
+			// 	"| newFP:", hex(newFP),
+			// 	"| match:", frame.fp == spDeltaFP)
+
+			// if frame.fp != spDeltaFP {
+			// 	println("  !! FP mismatch for", funcname(f), "got", hex(frame.fp), "want", hex(spDeltaFP))
+			// 	frame.fp = spDeltaFP
+			// }
 			d := dlog()
 			d.pc(frame.pc)
 			d.s("got")
@@ -596,6 +601,12 @@ func (u *unwinder) next() {
 	}
 
 	// Unwind to next frame.
+	// if debugUnwinderFramePointerDerivation && u.flags&unwindFramePointer != 0 {
+	// 	println("  -> advancing:", funcname(f), "=>", funcname(flr),
+	// 		"| lr:", hex(frame.lr),
+	// 		"| old sp:", hex(frame.sp),
+	// 		"| old fp:", hex(frame.fp))
+	// }
 	u.calleeFuncID = f.funcID
 	frame.fn = flr
 	frame.pc = frame.lr
