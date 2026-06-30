@@ -123,6 +123,15 @@ func RunSchedLocalQueueTest() {
 	}
 }
 
+func SystemStackFP() []uintptr {
+	pcs := make([]uintptr, 64)
+	var n int
+	systemstack(func() {
+		n = FPCallers(pcs)
+	})
+	return pcs[:n]
+}
+
 func RunSchedLocalQueueStealTest() {
 	p1 := new(p)
 	p2 := new(p)

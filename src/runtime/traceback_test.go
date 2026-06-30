@@ -144,6 +144,30 @@ func (w ttiWrapper) m1() *ttiResult {
 	return ttiLeaf()
 }
 
+func TestSystemStackFP(t *testing.T) {
+	pcs := runtime.SystemStackFP()
+	if len(pcs) == 0 {
+		t.Fatal("no PCs returned")
+	}
+	frames := runtime.CallersFrames(pcs)
+	var funcs []string
+	for {
+		frame, more := frames.Next()
+		t.Logf("%s", frame.Function)
+		funcs = append(funcs, frame.Function)
+		if !more {
+			break
+		}
+	}
+	want := "runtime_test.TestSystemStackFP"
+	for _, f := range funcs {
+		if f == want {
+			return
+		}
+	}
+	t.Errorf("frame %q not found in %v", want, funcs)
+}
+
 //go:noinline
 func ttiExcluded1() *ttiResult {
 	return ttiExcluded2()
