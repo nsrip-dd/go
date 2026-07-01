@@ -378,16 +378,19 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 			if !usesLR {
 				sp -= goarch.PtrSize
 			}
+
 			newFP = *(*uintptr)(unsafe.Pointer(sp))
 			sysStackJump := f.funcID == abi.FuncID_systemstack
 			sysStackCallee := findfunc(*(*uintptr)(unsafe.Pointer(frame.sp)))
 			if sysStackCallee.valid() {
 				sysStackJump = sysStackJump || sysStackCallee.funcID == abi.FuncID_systemstack
 			}
-			if newFP != 0 && !sysStackJump {
+			// TODO ADD DIAGRAM AND EXPLANATION
+			if newFP != 0 && !sysStackJump && f.flag&abi.FuncFlagTopFrame == 0 && f.funcID != abi.FuncID_morestack {
 				if goarch.ArchFamily == goarch.ARM64 && isInjectedCall(f.funcID) {
 					newFP -= 2 * goarch.PtrSize
 				}
+				// TODO explain
 				frame.fp = newFP + goarch.PtrSize
 			} else {
 				// If we see frame pointer 0 then we're at the first call. (TODO: true for arm64?)
@@ -401,35 +404,36 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 		// println(debugUnwinderFramePointerDerivation, "and", u.flags&unwindFramePointer !=0)
 		if debugUnwinderFramePointerDerivation && u.flags&unwindFramePointer != 0 {
 			spDeltaFP := frame.sp + uintptr(funcspdelta(f, frame.pc))
-			// println("unwind frame:", funcname(f),
-			// 	"| pc:", hex(frame.pc),
-			// 	"| sp:", hex(frame.sp),
-			// 	"| fp(ptr):", hex(frame.fp),
-			// 	"| fp(table):", hex(spDeltaFP),
-			// 	"| newFP:", hex(newFP),
-			// 	"| match:", frame.fp == spDeltaFP)
+			println("unwind frame:", funcname(f),
+				"| pc:", hex(frame.pc),
+				"| sp:", hex(frame.sp),
+				"| fp(ptr):", hex(frame.fp),
+				"| fp(table):", hex(spDeltaFP),
+				"| newFP:", hex(newFP),
+				"| match:", frame.fp == spDeltaFP)
 
-			// if frame.fp != spDeltaFP {
-			// 	println("  !! FP mismatch for", funcname(f), "got", hex(frame.fp), "want", hex(spDeltaFP))
-			// 	frame.fp = spDeltaFP
-			// }
-			d := dlog()
-			d.pc(frame.pc)
-			d.s("got")
-			d.hex(uint64(frame.fp))
-			d.s("want")
-			d.hex(uint64(spDeltaFP))
-			d.s("sp")
-			d.hex(uint64(frame.sp))
-			d.s("newFP")
-			d.hex(uint64(newFP))
-			d.end()
-			
 			if frame.fp != spDeltaFP {
-				println("got frame pointer", hex(frame.fp), "but wanted", hex(spDeltaFP))
-				breakpoint()
-				throw("bad frame pointer derivation in unwinder")
+				println("  !! FP mismatch for", funcname(f), "got", hex(frame.fp), "want", hex(spDeltaFP))
+				//breakpoint()
+				frame.fp = spDeltaFP
 			}
+			// d := dlog()
+			// d.pc(frame.pc)
+			// d.s("got")
+			// d.hex(uint64(frame.fp))
+			// d.s("want")
+			// d.hex(uint64(spDeltaFP))
+			// d.s("sp")
+			// d.hex(uint64(frame.sp))
+			// d.s("newFP")
+			// d.hex(uint64(newFP))
+			// d.end()
+			
+			// if frame.fp != spDeltaFP {
+			// 	println("got frame pointer", hex(frame.fp), "but wanted", hex(spDeltaFP))
+			// 	breakpoint()
+			// 	throw("bad frame pointer derivation in unwinder")
+			// }
 		}
 		if !usesLR {
 			// On x86, call instruction pushes return PC before entering new function.
@@ -601,12 +605,12 @@ func (u *unwinder) next() {
 	}
 
 	// Unwind to next frame.
-	// if debugUnwinderFramePointerDerivation && u.flags&unwindFramePointer != 0 {
-	// 	println("  -> advancing:", funcname(f), "=>", funcname(flr),
-	// 		"| lr:", hex(frame.lr),
-	// 		"| old sp:", hex(frame.sp),
-	// 		"| old fp:", hex(frame.fp))
-	// }
+	if debugUnwinderFramePointerDerivation && u.flags&unwindFramePointer != 0 {
+		println("  -> advancing:", funcname(f), "=>", funcname(flr),
+			"| lr:", hex(frame.lr),
+			"| old sp:", hex(frame.sp),
+			"| old fp:", hex(frame.fp))
+	}
 	u.calleeFuncID = f.funcID
 	frame.fn = flr
 	frame.pc = frame.lr
