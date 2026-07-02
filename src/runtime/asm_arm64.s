@@ -952,6 +952,9 @@ havem:
 
 	SUB	$48, R4		// Allocate the same frame size on the g stack
 	MOVD	R4, RSP		// switch stack
+
+	SUB $8, R4, R29 // subtract 8 from r4 to get FP and save it to R29
+
 	MOVD	$runtime·cgocallbackg<ABIInternal>(SB), R11
 	CALL	(R11) // indirect call to bypass nosplit check. We're on a different stack now.
 
