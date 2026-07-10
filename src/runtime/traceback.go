@@ -374,7 +374,7 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 			// if you consider the !usesLR correction below. But it isn't right to do
 			// if the new frame pointer is 0.
 			sp := frame.sp - goarch.PtrSize
-
+			
 			if !usesLR {
 				sp -= goarch.PtrSize
 			}
@@ -390,11 +390,14 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 			tableFallback := []bool{
 				// If the new frame pointer is 0, then we're at the first call.
 				newFP == 0,
+				// If the current function is systemstack or called by systemstack, then the frame pointer is not reliable so we must fall back to spdelta table.
 				sysStackJump,
 				// If the current function is a top frame, then there is no place to store the frame pointer, so we must fall back to spdelta table.
 				f.flag&abi.FuncFlagTopFrame != 0,
 				// If the current function is morestack, its call frame is NOFRAME so there is no place to store the frame pointer, so we must fall back to spdelta table.
 				f.funcID == abi.FuncID_morestack,
+				// If the current function is mstart0, the frame pointer is not always reliable due to stack space below mstart0 being used and sometimes altering the memory where the stack pointer is saved. Likely fixable, but for now this condition has been added **.
+				funcname(f) == "runtime.mstart0",
 			}
 			useTable := false
 			for _, b := range tableFallback {
@@ -450,6 +453,7 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 				println("got frame pointer", hex(frame.fp), "but wanted", hex(spDeltaFP))
 				breakpoint()
 				throw("bad frame pointer derivation in unwinder")
+				//frame.fp = spDeltaFP
 			}
 		}
 		if !usesLR {
