@@ -1006,7 +1006,7 @@ func mcommoninit(mp *m, id int64) {
 
 	// g0 stack won't make sense for user (and is not necessary unwindable).
 	if gp != gp.m.g0 {
-		callers(1, mp.createstack[:])
+		callersFP(1, mp.createstack[:])
 	}
 
 	lock(&sched.lock)

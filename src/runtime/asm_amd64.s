@@ -1115,6 +1115,11 @@ havem:
 	MOVQ	(g_sched+gobuf_sp)(SI), DI  // prepare stack as DI
 	MOVQ	(g_sched+gobuf_pc)(SI), BX
 	MOVQ	BX, -8(DI)  // "push" return PC on the g stack
+
+	MOVQ	(g_sched+gobuf_bp)(SI), R9
+	MOVQ	R9, -16(DI)
+	LEAQ	-16(DI), BP
+
 	// Gather our arguments into registers.
 	MOVQ	fn+0(FP), AX
 	MOVQ	frame+8(FP), BX
