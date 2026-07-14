@@ -540,7 +540,7 @@ func saveblockevent(cycles, rate int64, skip int, which bucketType) {
 	var nstk int
 	if tracefpunwindoff() || gp.m.hasCgoOnStack() {
 		if gp.m.curg == nil || gp.m.curg == gp {
-			nstk = callers(skip, mp.profStack)
+			nstk = callersFP(skip, mp.profStack)
 		} else {
 			nstk = gcallers(gp.m.curg, skip, mp.profStack)
 		}
