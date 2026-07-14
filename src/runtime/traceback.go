@@ -1264,6 +1264,12 @@ func gcallers(gp *g, skip int, pcbuf []uintptr) int {
 	return tracebackPCs(&u, skip, pcbuf)
 }
 
+func gcallersFP(gp *g, skip int, pcbuf []uintptr) int {
+	var u unwinder
+	u.init(gp, unwindSilentErrors|unwindFramePointer)
+	return tracebackPCs(&u, skip, pcbuf)
+}
+
 // showframe reports whether the frame with the given characteristics should
 // be printed during a traceback.
 func showframe(sf srcFunc, gp *g, firstFrame bool, calleeID abi.FuncID) bool {
