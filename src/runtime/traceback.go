@@ -448,13 +448,14 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 			d.s("newFP")
 			d.hex(uint64(newFP))
 			d.end()
-			
+	
 			if frame.fp != spDeltaFP {
 				println("got frame pointer", hex(frame.fp), "but wanted", hex(spDeltaFP))
 				breakpoint()
 				throw("bad frame pointer derivation in unwinder")
 				//frame.fp = spDeltaFP
 			}
+			
 		}
 		if !usesLR {
 			// On x86, call instruction pushes return PC before entering new function.

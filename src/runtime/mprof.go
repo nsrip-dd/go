@@ -542,7 +542,7 @@ func saveblockevent(cycles, rate int64, skip int, which bucketType) {
 		if gp.m.curg == nil || gp.m.curg == gp {
 			nstk = callersFP(skip, mp.profStack)
 		} else {
-			nstk = gcallers(gp.m.curg, skip, mp.profStack)
+			nstk = gcallersFP(gp.m.curg, skip, mp.profStack)
 		}
 	} else {
 		if gp.m.curg == nil || gp.m.curg == gp {

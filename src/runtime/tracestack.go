@@ -76,9 +76,9 @@ func traceStack(skip int, gp *g, tab *traceStackTable) uint64 {
 		// symbolizer.
 		pcBuf[0] = logicalStackSentinel
 		if getg() == gp {
-			nstk += callers(skip+1, pcBuf[1:])
+			nstk += callersFP(skip+1, pcBuf[1:])
 		} else if gp != nil {
-			nstk += gcallers(gp, skip, pcBuf[1:])
+			nstk += gcallersFP(gp, skip, pcBuf[1:])
 		}
 	} else {
 		// Fast path: Unwind using frame pointers.
