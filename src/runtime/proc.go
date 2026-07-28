@@ -5490,7 +5490,7 @@ func saveAncestors(callergp *g) *[]ancestorInfo {
 	copy(ancestors[1:], callerAncestors)
 
 	var pcs [tracebackInnerFrames]uintptr
-	npcs := gcallers(callergp, 0, pcs[:])
+	npcs := gcallersFP(callergp, 0, pcs[:])
 	ipcs := make([]uintptr, npcs)
 	copy(ipcs, pcs[:])
 	ancestors[0] = ancestorInfo{
