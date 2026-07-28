@@ -1116,9 +1116,9 @@ havem:
 	MOVQ	(g_sched+gobuf_pc)(SI), BX
 	MOVQ	BX, -8(DI)  // "push" return PC on the g stack
 
-	MOVQ	(g_sched+gobuf_bp)(SI), R9
-	MOVQ	R9, -16(DI)
-	LEAQ	-16(DI), BP
+	MOVQ	(g_sched+gobuf_bp)(SI), R9 // prepare frame pointer as R9
+	MOVQ	R9, -16(DI) // "push" frame pointer on the g stack
+	LEAQ	-16(DI), BP // set frame pointer to the g stack
 
 	// Gather our arguments into registers.
 	MOVQ	fn+0(FP), AX
