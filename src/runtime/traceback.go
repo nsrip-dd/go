@@ -412,7 +412,10 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 				f.funcID == abi.FuncID_morestack,
 				// If the current function is mstart0, the frame pointer is not always reliable due to stack space below mstart0 being used and sometimes altering the memory where the stack pointer is saved. Likely fixable, but for now this condition has been added **.
 				funcname(f) == "runtime.mstart0",
+				// If the unwinder started unwinding the stack before the prologue could properly set up the frame pointer, then the frame pointer is not reliable so we must fall back to spdelta table.
 				u.prePrologue,
+				// If the current function called an injected function, the frame pointer is not reliable so we must fall back to spdelta table.
+				isInjectedCall(u.calleeFuncID),
 			}
 			useTable := false
 			for _, b := range tableFallback {
@@ -444,22 +447,8 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 			u.prePrologue = true
 		}
 		
-		// println(debugUnwinderFramePointerDerivation, "and", u.flags&unwindFramePointer !=0)
 		if debugUnwinderFramePointerDerivation && u.flags&unwindFramePointer != 0 {
 			spDeltaFP := frame.sp + uintptr(funcspdelta(f, frame.pc))
-			// println("unwind frame:", funcname(f),
-			// 	"| pc:", hex(frame.pc),
-			// 	"| sp:", hex(frame.sp),
-			// 	"| fp(ptr):", hex(frame.fp),
-			// 	"| fp(table):", hex(spDeltaFP),
-			// 	"| newFP:", hex(newFP),
-			// 	"| match:", frame.fp == spDeltaFP)
-
-			// if frame.fp != spDeltaFP {
-			// 	println("  !! FP mismatch for", funcname(f), "got", hex(frame.fp), "want", hex(spDeltaFP))
-			// 	//breakpoint()
-			// 	frame.fp = spDeltaFP
-			// }
 			if debugUnwinderFramePointerDerivation && u.flags&unwindFramePointer != 0 {
 				d := dlog()
 				d.s("[u=").hex(uint64(uintptr(unsafe.Pointer(u)))).s("]")
@@ -479,29 +468,10 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 					d.s("got").hex(uint64(frame.fp))
 					d.s("want").hex(uint64(spDeltaFP))
 					d.end()
-					//breakpoint()
+					breakpoint()
 					throw("FP mismatch")
 					//frame.fp = spDeltaFP
 				}
-
-			
-
-			// d := dlog()
-			// d.pc(frame.pc)
-			// d.s("got")
-			// d.hex(uint64(frame.fp))
-			// d.s("want")
-			// d.hex(uint64(spDeltaFP))
-			// d.s("sp")
-			// d.hex(uint64(frame.sp))
-			// d.s("newFP")
-			// d.hex(uint64(newFP))
-			// d.end()
-	
-			// if frame.fp != spDeltaFP {
-			// 	println("  !! FP mismatch for", funcname(f), "got", hex(frame.fp), "want", hex(spDeltaFP))
-			// 	//breakpoint()
-			// 	frame.fp = spDeltaFP
 			}
 			
 		}
