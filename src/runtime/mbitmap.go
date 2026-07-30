@@ -1948,7 +1948,7 @@ func pointerMask(ep any) (mask []byte) {
 	if gp := getg(); gp.m.curg.stack.lo <= uintptr(p) && uintptr(p) < gp.m.curg.stack.hi {
 		found := false
 		var u unwinder
-		for u.initAt(gp.m.curg.sched.pc, gp.m.curg.sched.sp, 0, gp.m.curg, 0); u.valid(); u.next() {
+		for u.initAt(gp.m.curg.sched.pc, gp.m.curg.sched.sp, 0, gp.m.curg, unwindFramePointer); u.valid(); u.next() {
 			if u.frame.sp <= uintptr(p) && uintptr(p) < u.frame.varp {
 				found = true
 				break

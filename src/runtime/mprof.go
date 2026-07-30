@@ -731,7 +731,7 @@ func (prof *mLockProfile) captureStack() {
 	pc := sys.GetCallerPC()
 	systemstack(func() {
 		var u unwinder
-		u.initAt(pc, sp, 0, gp, unwindSilentErrors|unwindJumpStack)
+		u.initAt(pc, sp, 0, gp, unwindSilentErrors|unwindJumpStack|unwindFramePointer)
 		nstk = tracebackPCs(&u, skip, prof.stack)
 	})
 	if nstk < len(prof.stack) {
@@ -1677,7 +1677,7 @@ func saveg(pc, sp uintptr, gp *g, r *profilerecord.StackRecord, pcbuf []uintptr)
 	}
 
 	var u unwinder
-	u.initAt(pc, sp, 0, gp, unwindSilentErrors)
+	u.initAt(pc, sp, 0, gp, unwindSilentErrors|unwindFramePointer)
 	n := tracebackPCs(&u, 0, pcbuf)
 	r.Stack = make([]uintptr, n)
 	copy(r.Stack, pcbuf)

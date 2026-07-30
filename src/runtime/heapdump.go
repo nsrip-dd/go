@@ -372,7 +372,7 @@ func dumpgoroutine(gp *g) {
 	child.sp = nil
 	child.depth = 0
 	var u unwinder
-	for u.initAt(pc, sp, lr, gp, 0); u.valid(); u.next() {
+	for u.initAt(pc, sp, lr, gp, unwindFramePointer); u.valid(); u.next() {
 		dumpframe(&u.frame, &child)
 	}
 

@@ -528,7 +528,7 @@ func TracebackSystemstack(stk []uintptr, i int) int {
 	if i == 0 {
 		pc, sp := sys.GetCallerPC(), sys.GetCallerSP()
 		var u unwinder
-		u.initAt(pc, sp, 0, getg(), unwindJumpStack) // Don't ignore errors, for testing
+		u.initAt(pc, sp, 0, getg(), unwindJumpStack|unwindFramePointer) // Don't ignore errors, for testing
 		return tracebackPCs(&u, 0, stk)
 	}
 	n := 0

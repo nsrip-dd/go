@@ -1006,7 +1006,7 @@ func (p *_panic) nextFrame() (ok bool) {
 		}
 
 		var u unwinder
-		u.initAt(p.pc, uintptr(p.sp), 0, gp, 0)
+		u.initAt(p.pc, uintptr(p.sp), 0, gp, unwindFramePointer)
 		for {
 			if !u.valid() {
 				p.pc = 0
@@ -1037,7 +1037,7 @@ func (p *_panic) nextFrame() (ok bool) {
 				//
 				// The final condition is just to make sure that the line below
 				// is actually helpful.
-				u.initAt(p.link.pc, uintptr(p.link.sp), 0, gp, 0)
+				u.initAt(p.link.pc, uintptr(p.link.sp), 0, gp, unwindFramePointer)
 				continue
 			}
 
