@@ -689,6 +689,10 @@ func (u *unwinder) next() {
 		}
 	}
 
+	if (flr.funcID == abi.FuncID_morestack){
+		u.prePrologue = true
+	}
+
 	u.resolveInternal(false, false)
 }
 
