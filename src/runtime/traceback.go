@@ -416,6 +416,8 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 				u.prePrologue,
 				// If the current function called an injected function, the frame pointer is not reliable so we must fall back to spdelta table.
 				isInjectedCall(u.calleeFuncID),
+				// If the current function is asyncPreempt, the frame pointer is not reliable so we must fall back to spdelta table.
+				f.funcID == abi.FuncID_asyncPreempt,
 			}
 			useTable := false
 			for _, b := range tableFallback {
