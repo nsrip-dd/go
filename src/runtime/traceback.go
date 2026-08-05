@@ -711,7 +711,7 @@ func (u *unwinder) next() {
 	if usesLR && injectedCall {
 		x := *(*uintptr)(unsafe.Pointer(frame.sp))
 		frame.sp += alignUp(sys.MinFrameSize, sys.StackAlign)
-		f = 	func(frame.pc)
+		f = findfunc(frame.pc)
 		frame.fn = f
 		if !f.valid() {
 			frame.pc = x
