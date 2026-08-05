@@ -126,6 +126,7 @@ type unwinder struct {
 
 	// boolean to indicate that the unwinder has started unwinding a function pre-prologue meaning the FP for the function unwound after is not reliable. For now, we will just use the stack pointer delta table to derive the next frame's FP.
 	prePrologue bool
+	//TODO ADD COMMENTS ABOUT THIS ^
 }
 
 // init initializes u to start unwinding gp's stack and positions the
@@ -285,6 +286,9 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 	frame := &u.frame
 	gp := u.g.ptr()
 
+	mp := gp.m
+	onG0 := mp != nil && gp == mp.g0
+
 	f := frame.fn
 	if f.pcsp == 0 {
 		// No frame information, must be external function, like race support.
@@ -394,38 +398,50 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 			}
 
 			newFP = *(*uintptr)(unsafe.Pointer(sp))
-			// If the current function is systemstack or called by systemstack, then the frame pointer is not reliable so we must fall back to spdelta table.
-			sysStackJump := f.funcID == abi.FuncID_systemstack
-			sysStackCallee := findfunc(*(*uintptr)(unsafe.Pointer(frame.sp)))
-			if sysStackCallee.valid() {
-				sysStackJump = sysStackJump || sysStackCallee.funcID == abi.FuncID_systemstack
-			}
-			// If any of these are true, we should fall back to the spdelta table.
-			tableFallback := []bool{
-				// If the new frame pointer is 0, then we're at the first call.
-				newFP == 0,
-				// If the current function is systemstack or called by systemstack, then the frame pointer is not reliable so we must fall back to spdelta table.
-				sysStackJump,
-				// If the current function is a top frame, then there is no place to store the frame pointer, so we must fall back to spdelta table.
-				f.flag&abi.FuncFlagTopFrame != 0,
-				// If the current function is morestack, its call frame is NOFRAME so there is no place to store the frame pointer, so we must fall back to spdelta table.
-				f.funcID == abi.FuncID_morestack,
-				// If the current function is mstart0, the frame pointer is not always reliable due to stack space below mstart0 being used and sometimes altering the memory where the stack pointer is saved. Likely fixable, but for now this condition has been added **.
-				funcname(f) == "runtime.mstart0",
-				// If the unwinder started unwinding the stack before the prologue could properly set up the frame pointer, then the frame pointer is not reliable so we must fall back to spdelta table.
-				u.prePrologue,
-				// If the current function called an injected function, the frame pointer is not reliable so we must fall back to spdelta table.
-				isInjectedCall(u.calleeFuncID),
-				// If the current function is asyncPreempt, the frame pointer is not reliable so we must fall back to spdelta table.
-				f.funcID == abi.FuncID_asyncPreempt,
-			}
-			useTable := false
-			for _, b := range tableFallback {
-				if b {
-					useTable = true
-					break
-				}
-			}
+			// sysStackJump is true if 1) the frame we are on is systemstack or 2) this frame's caller is systemstack.
+			// 
+			// sysStackJump := f.funcID == abi.FuncID_systemstack
+			// sysStackCallee := findfunc(*(*uintptr)(unsafe.Pointer(frame.sp)))
+			// if sysStackCallee.valid() {
+			// 	sysStackJump = sysStackJump || sysStackCallee.funcID == abi.FuncID_systemstack
+			// }
+			// // If any of these are true, we should fall back to the spdelta table.
+			// tableFallback := []bool{
+			// 	// If the new frame pointer is 0, then we're at the first call.
+			// 	newFP == 0,
+			// 	// If the current function is systemstack or called by systemstack, then the frame pointer is not reliable so we must fall back to spdelta table.
+			// 	//sysStackJump,
+			// 	// If the current function is a top frame, then there is no place to store the frame pointer, so we must fall back to spdelta table.
+			// 	f.flag&abi.FuncFlagTopFrame != 0,
+			// 	// If the current function is morestack, its call frame is NOFRAME so there is no place to store the frame pointer, so we must fall back to spdelta table.
+			// 	f.funcID == abi.FuncID_morestack,
+			// 	// If the current function is mstart0, the frame pointer is not always reliable due to stack space below mstart0 being used and sometimes altering the memory where the stack pointer is saved. Likely fixable, but for now this condition has been added **.
+			// 	f.entry() == abi.FuncPCABIInternal(mstart0),
+			// 	// If the unwinder started unwinding the stack before the prologue could properly set up the frame pointer, then the frame pointer is not reliable so we must fall back to spdelta table.
+			// 	u.prePrologue,
+			// 	// If the current function called an injected function, the frame pointer is not reliable so we must fall back to spdelta table.
+			// 	isInjectedCall(u.calleeFuncID),
+			// 	// If the current function is asyncPreempt, the frame pointer is not reliable so we must fall back to spdelta table.
+			// 	f.funcID == abi.FuncID_asyncPreempt,
+			// }
+			// useTable := false
+			// for _, b := range tableFallback {
+			// 	if b {
+			// 		useTable = true
+			// 		break
+			// 	}
+			// }
+			useTable := newFP == 0 || // first call; nothing below us
+				u.prePrologue || // prologue hadn't run, so the saved-FP slot holds garbage
+				f.funcID == abi.FuncID_systemstack || // switches stacks without updating FP
+				f.funcID == abi.FuncID_morestack || // NOSPLIT|NOFRAME, no saved-FP slot
+				f.funcID == abi.FuncID_asyncPreempt || // saved FP is whatever the signal interrupted
+				isInjectedCall(u.calleeFuncID) || // no CALL, so no frame record
+				f.flag&abi.FuncFlagTopFrame != 0 || // zero-size frame, nowhere to save FP
+				f.entry() == abi.FuncPCABIInternal(mstart0) || // gogo restores a stale sched.bp
+				// systemstack's callee saved a stale R29 from curg into its
+				// record on g0. Only possible while unwinding g0.
+				(onG0 && callerIsSystemstack(frame.sp))
 			if !useTable {
 				if goarch.ArchFamily == goarch.ARM64 && isInjectedCall(f.funcID) {
 					newFP -= 2 * goarch.PtrSize
@@ -595,6 +611,19 @@ func isInjectedCall(id abi.FuncID) bool {
 	return id == abi.FuncID_sigpanic || id == abi.FuncID_asyncPreempt || id == abi.FuncID_debugCallV2
 }
 
+// callerIsSystemstack reports whether the return address saved at sp belongs to
+// systemstack. Only meaningful on LR machines, where sp holds the saved LR; on
+// amd64 the return address sits above the frame, not at sp.
+//
+//go:nosplit
+func callerIsSystemstack(sp uintptr) bool {
+	if !usesLR {
+		return false
+	}
+	f := findfunc(*(*uintptr)(unsafe.Pointer(sp)))
+	return f.valid() && f.funcID == abi.FuncID_systemstack
+}
+
 func (u *unwinder) next() {
 	frame := &u.frame
 	f := frame.fn
@@ -682,7 +711,7 @@ func (u *unwinder) next() {
 	if usesLR && injectedCall {
 		x := *(*uintptr)(unsafe.Pointer(frame.sp))
 		frame.sp += alignUp(sys.MinFrameSize, sys.StackAlign)
-		f = findfunc(frame.pc)
+		f = 	func(frame.pc)
 		frame.fn = f
 		if !f.valid() {
 			frame.pc = x
