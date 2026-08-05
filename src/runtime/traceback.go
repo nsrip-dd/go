@@ -486,8 +486,8 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 					d.s("got").hex(uint64(frame.fp))
 					d.s("want").hex(uint64(spDeltaFP))
 					d.end()
-					breakpoint()
 					throw("FP mismatch")
+					breakpoint()
 					//frame.fp = spDeltaFP
 				}
 			}
