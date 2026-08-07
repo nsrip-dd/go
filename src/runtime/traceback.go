@@ -79,9 +79,8 @@ const (
 	unwindFramePointer
 )
 
-const debugUnwinderFramePointerDerivation = true
-
-const debugUnwinderFPBoundsCheck = false
+// TODO
+const debugUnwinderFramePointerDerivation = false
 
 // An unwinder iterates the physical stack frames of a Go sack.
 //
@@ -124,9 +123,9 @@ type unwinder struct {
 	// unwind (see the flags documentation).
 	flags unwindFlags
 
-	// boolean to indicate that the unwinder has started unwinding a function pre-prologue meaning the FP for the function unwound after is not reliable. For now, we will just use the stack pointer delta table to derive the next frame's FP.
+	// prePrologue is true if the unwinder has started unwinding a function before the call frame is set up, 
+	// meaning there is not a FP to follow to the top of the frame.
 	prePrologue bool
-	//TODO ADD COMMENTS ABOUT THIS ^
 }
 
 // init initializes u to start unwinding gp's stack and positions the
@@ -244,16 +243,7 @@ func (u *unwinder) initAt(pc0, sp0, lr0 uintptr, gp *g, flags unwindFlags) {
 	}
 
 	isSyscall := frame.pc == pc0 && frame.sp == sp0 && pc0 == gp.syscallpc && sp0 == gp.syscallsp
-	if debugUnwinderFramePointerDerivation && flags&unwindFramePointer != 0 {
-		d := dlog()
-		d.s("=== INIT [u=").hex(uint64(uintptr(unsafe.Pointer(u)))).s("]")
-		d.s("| goid:").hex(uint64(gp.goid))
-		d.s("| seed pc:").hex(uint64(frame.pc))
-		d.s("| seed sp:").hex(uint64(frame.sp))
-		d.s("| sched.pc:").hex(uint64(gp.sched.pc))
-		d.s("| sched.bp:").hex(uint64(gp.sched.bp))
-		d.end()
-	}
+
 	u.resolveInternal(true, isSyscall)
 }
 
@@ -285,9 +275,6 @@ func (u *unwinder) valid() bool {
 func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 	frame := &u.frame
 	gp := u.g.ptr()
-
-	mp := gp.m
-	onG0 := mp != nil && gp == mp.g0
 
 	f := frame.fn
 	if f.pcsp == 0 {
@@ -360,8 +347,11 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 				flag &^= abi.FuncFlagSPWrite
 			}
 		}
-		var newFP uintptr
 		if u.flags&unwindFramePointer != 0 && !innermost {
+			// TODO - most of this comment should be setting up what we are doing which is finding 
+			// top of call frame by reading FP below SP.
+			// add comments for each edge case where we dont use fp 
+			// condense this x
 			// if innermost is true, then we won't have a frame
 			// pointer to follow yet. There's nothing below this
 			// frame on x86 at least. Probably yes on arm though?
@@ -392,45 +382,10 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 			// if you consider the !usesLR correction below. But it isn't right to do
 			// if the new frame pointer is 0.
 			sp := frame.sp - goarch.PtrSize
-			
 			if !usesLR {
 				sp -= goarch.PtrSize
 			}
-
-			newFP = *(*uintptr)(unsafe.Pointer(sp))
-			// sysStackJump is true if 1) the frame we are on is systemstack or 2) this frame's caller is systemstack.
-			// 
-			// sysStackJump := f.funcID == abi.FuncID_systemstack
-			// sysStackCallee := findfunc(*(*uintptr)(unsafe.Pointer(frame.sp)))
-			// if sysStackCallee.valid() {
-			// 	sysStackJump = sysStackJump || sysStackCallee.funcID == abi.FuncID_systemstack
-			// }
-			// // If any of these are true, we should fall back to the spdelta table.
-			// tableFallback := []bool{
-			// 	// If the new frame pointer is 0, then we're at the first call.
-			// 	newFP == 0,
-			// 	// If the current function is systemstack or called by systemstack, then the frame pointer is not reliable so we must fall back to spdelta table.
-			// 	//sysStackJump,
-			// 	// If the current function is a top frame, then there is no place to store the frame pointer, so we must fall back to spdelta table.
-			// 	f.flag&abi.FuncFlagTopFrame != 0,
-			// 	// If the current function is morestack, its call frame is NOFRAME so there is no place to store the frame pointer, so we must fall back to spdelta table.
-			// 	f.funcID == abi.FuncID_morestack,
-			// 	// If the current function is mstart0, the frame pointer is not always reliable due to stack space below mstart0 being used and sometimes altering the memory where the stack pointer is saved. Likely fixable, but for now this condition has been added **.
-			// 	f.entry() == abi.FuncPCABIInternal(mstart0),
-			// 	// If the unwinder started unwinding the stack before the prologue could properly set up the frame pointer, then the frame pointer is not reliable so we must fall back to spdelta table.
-			// 	u.prePrologue,
-			// 	// If the current function called an injected function, the frame pointer is not reliable so we must fall back to spdelta table.
-			// 	isInjectedCall(u.calleeFuncID),
-			// 	// If the current function is asyncPreempt, the frame pointer is not reliable so we must fall back to spdelta table.
-			// 	f.funcID == abi.FuncID_asyncPreempt,
-			// }
-			// useTable := false
-			// for _, b := range tableFallback {
-			// 	if b {
-			// 		useTable = true
-			// 		break
-			// 	}
-			// }
+			newFP := *(*uintptr)(unsafe.Pointer(sp))
 			useTable := newFP == 0 || // first call; nothing below us
 				u.prePrologue || // prologue hadn't run, so the saved-FP slot holds garbage
 				f.funcID == abi.FuncID_systemstack || // switches stacks without updating FP
@@ -441,7 +396,7 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 				f.entry() == abi.FuncPCABIInternal(mstart0) || // gogo restores a stale sched.bp
 				// systemstack's callee saved a stale R29 from curg into its
 				// record on g0. Only possible while unwinding g0.
-				(onG0 && callerIsSystemstack(frame.sp))
+				callerIsSystemstack(frame.sp) // ask nick about this 
 			if !useTable {
 				if goarch.ArchFamily == goarch.ARM64 && isInjectedCall(f.funcID) {
 					newFP -= 2 * goarch.PtrSize
@@ -457,7 +412,9 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 		} else {
 			frame.fp = frame.sp + uintptr(funcspdelta(f, frame.pc))
 		}
-		//If the frame pointer is equal to the stack pointer, the unwinder has started unwinding a function pre-prologue meaning the FP for the function unwound after is not reliable. For now, we will just use the stack pointer delta table to derive the next frame's FP.
+		// If the frame pointer is equal to the stack pointer, the unwinder has started unwinding a function pre-prologue 
+		// meaning the FP for the function unwound after is not reliable. For now, we will just use the stack pointer delta 
+		// table to derive the next frame's FP.
 		if u.prePrologue {
 			u.prePrologue = false
 		}
@@ -467,31 +424,11 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 		
 		if debugUnwinderFramePointerDerivation && u.flags&unwindFramePointer != 0 {
 			spDeltaFP := frame.sp + uintptr(funcspdelta(f, frame.pc))
-			if debugUnwinderFramePointerDerivation && u.flags&unwindFramePointer != 0 {
-				d := dlog()
-				d.s("[u=").hex(uint64(uintptr(unsafe.Pointer(u)))).s("]")
-				d.s("| goid:").hex(uint64(gp.goid))
-				d.s("unwind frame:").s(funcname(f))
-				d.s("| pc:").hex(uint64(frame.pc))
-				d.s("| sp:").hex(uint64(frame.sp))
-				d.s("| fp(ptr):").hex(uint64(frame.fp))
-				d.s("| fp(table):").hex(uint64(spDeltaFP))
-				d.s("| newFP:").hex(uint64(newFP))
-				d.s("| match:").b(frame.fp == spDeltaFP)
-				d.end()
 
-				if frame.fp != spDeltaFP {
-					d := dlog()
-					d.s("  !! FP mismatch for").s(funcname(f))
-					d.s("got").hex(uint64(frame.fp))
-					d.s("want").hex(uint64(spDeltaFP))
-					d.end()
-					throw("FP mismatch")
-					breakpoint()
-					//frame.fp = spDeltaFP
-				}
+			if frame.fp != spDeltaFP {
+				println("wanted:", hex(spDeltaFP), "got:", hex(frame.fp))
+				throw("FP mismatch")
 			}
-			
 		}
 		
 		if !usesLR {
@@ -617,7 +554,9 @@ func isInjectedCall(id abi.FuncID) bool {
 //
 //go:nosplit
 func callerIsSystemstack(sp uintptr) bool {
-	if !usesLR {
+	mp := gp.m
+	onG0 := mp != nil && gp == mp.g0
+	if !usesLR || !onG0 {
 		return false
 	}
 	f := findfunc(*(*uintptr)(unsafe.Pointer(sp)))
@@ -676,29 +615,7 @@ func (u *unwinder) next() {
 		u.flags &^= unwindTrap
 	}
 
-	// // Unwind to next frame.
-	// if debugUnwinderFramePointerDerivation && u.flags&unwindFramePointer != 0 {
-	// 	println("  -> advancing:", funcname(f), "=>", funcname(flr),
-	// 		"| lr:", hex(frame.lr),
-	// 		"| old sp:", hex(frame.sp),
-	// 		"| old fp:", hex(frame.fp))
-	// }
-
 	// Unwind to next frame.
-	if debugUnwinderFramePointerDerivation && u.flags&unwindFramePointer != 0 {
-		d := dlog()
-		d.s("  -> advancing:")
-		d.s(funcname(f))
-		d.s("=>")
-		d.s(funcname(flr))
-		d.s("| lr:")
-		d.hex(uint64(frame.lr))
-		d.s("| old sp:")
-		d.hex(uint64(frame.sp))
-		d.s("| old fp:")
-		d.hex(uint64(frame.fp))
-		d.end()
-	}
 	u.calleeFuncID = f.funcID
 	frame.fn = flr
 	frame.pc = frame.lr
