@@ -1133,7 +1133,7 @@ func gorecover() any {
 	canRecover := false
 	systemstack(func() {
 		var u unwinder
-		u.init(gp, 0)
+		u.init(gp, unwindFramePointer)
 		u.next() // skip systemstack_switch
 		u.next() // skip gorecover
 		nonWrapperFrames := 0

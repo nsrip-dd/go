@@ -974,7 +974,7 @@ func scanstack(gp *g, gcw *gcWork) int64 {
 
 	// Scan the stack. Accumulate a list of stack objects.
 	var u unwinder
-	for u.init(gp, 0); u.valid(); u.next() {
+	for u.init(gp, unwindFramePointer); u.valid(); u.next() {
 		scanframeworker(&u.frame, &state, gcw)
 	}
 
