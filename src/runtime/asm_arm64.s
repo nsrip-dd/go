@@ -316,12 +316,6 @@ nosecret:
 	MOVD	$0, -16(RSP)			// dummy LR
 	SUB	$16, RSP
 
-	// Correcting the value that RSP points to so unwinding works correctly with frame pointers
-	MOVD 	RSP, R3 			// R3 = sp
-	SUB $8, R3
-	ADD $16, R3, R4
-	MOVD R4, 0(R3)
-
 	MOVD	0(R26), R4			// code pointer
 	BL	(R4)
 	B	runtime·badmcall2(SB)

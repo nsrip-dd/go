@@ -391,12 +391,13 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 				f.funcID == abi.FuncID_systemstack || // switches stacks without updating FP
 				f.funcID == abi.FuncID_morestack || // NOSPLIT|NOFRAME, no saved-FP slot
 				f.funcID == abi.FuncID_asyncPreempt || // saved FP is whatever the signal interrupted
+				f.funcID == abi.FuncID_mcall || // mcall's callee saved a stale R29 from curg into its record on g0. Only possible while unwinding g0.
 				isInjectedCall(u.calleeFuncID) || // no CALL, so no frame record
 				f.flag&abi.FuncFlagTopFrame != 0 || // zero-size frame, nowhere to save FP
 				f.entry() == abi.FuncPCABIInternal(mstart0) || // gogo restores a stale sched.bp
 				// systemstack's callee saved a stale R29 from curg into its
 				// record on g0. Only possible while unwinding g0.
-				callerIsSystemstack(frame.sp) // ask nick about this 
+				callerIsSystemstack(gp, frame.sp)
 			if !useTable {
 				if goarch.ArchFamily == goarch.ARM64 && isInjectedCall(f.funcID) {
 					newFP -= 2 * goarch.PtrSize
@@ -415,12 +416,7 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 		// If the frame pointer is equal to the stack pointer, the unwinder has started unwinding a function pre-prologue 
 		// meaning the FP for the function unwound after is not reliable. For now, we will just use the stack pointer delta 
 		// table to derive the next frame's FP.
-		if u.prePrologue {
-			u.prePrologue = false
-		}
-		if (frame.fp == frame.sp){
-			u.prePrologue = true
-		}
+		u.prePrologue = frame.fp == frame.sp
 		
 		if debugUnwinderFramePointerDerivation && u.flags&unwindFramePointer != 0 {
 			spDeltaFP := frame.sp + uintptr(funcspdelta(f, frame.pc))
@@ -553,10 +549,11 @@ func isInjectedCall(id abi.FuncID) bool {
 // amd64 the return address sits above the frame, not at sp.
 //
 //go:nosplit
-func callerIsSystemstack(sp uintptr) bool {
-	mp := gp.m
-	onG0 := mp != nil && gp == mp.g0
-	if !usesLR || !onG0 {
+func callerIsSystemstack(gp *g, sp uintptr) bool {
+	if gp.m != nil && gp != gp.m.g0 {
+		return false
+	}
+	if !usesLR {
 		return false
 	}
 	f := findfunc(*(*uintptr)(unsafe.Pointer(sp)))
