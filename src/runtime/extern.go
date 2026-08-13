@@ -310,7 +310,7 @@ import (
 // The boolean ok is false if it was not possible to recover the information.
 func Caller(skip int) (pc uintptr, file string, line int, ok bool) {
 	rpc := make([]uintptr, 1)
-	n := callersFP(skip+1, rpc)
+	n := callers(skip+1, rpc)
 	if n < 1 {
 		return
 	}
@@ -338,7 +338,7 @@ func Callers(skip int, pc []uintptr) int {
 	if len(pc) == 0 {
 		return 0
 	}
-	return callersFP(skip, pc)
+	return callers(skip, pc)
 }
 
 var defaultGOROOT string // set by cmd/link

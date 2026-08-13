@@ -440,7 +440,7 @@ func mProf_Malloc(mp *m, p unsafe.Pointer, size uintptr) {
 	}
 	// Only use the part of mp.profStack we need and ignore the extra space
 	// reserved for delayed inline expansion with frame pointer unwinding.
-	nstk := callersFP(3, mp.profStack[:debug.profstackdepth+2])
+	nstk := callers(3, mp.profStack[:debug.profstackdepth+2])
 	index := (mProfCycle.read() + 2) % uint32(len(memRecord{}.future))
 
 	b := stkbucket(memProfile, size, mp.profStack[:nstk], true)
@@ -540,9 +540,9 @@ func saveblockevent(cycles, rate int64, skip int, which bucketType) {
 	var nstk int
 	if tracefpunwindoff() || gp.m.hasCgoOnStack() {
 		if gp.m.curg == nil || gp.m.curg == gp {
-			nstk = callersFP(skip, mp.profStack)
+			nstk = callers(skip, mp.profStack)
 		} else {
-			nstk = gcallersFP(gp.m.curg, skip, mp.profStack)
+			nstk = gcallers(gp.m.curg, skip, mp.profStack)
 		}
 	} else {
 		if gp.m.curg == nil || gp.m.curg == gp {
@@ -1677,7 +1677,7 @@ func saveg(pc, sp uintptr, gp *g, r *profilerecord.StackRecord, pcbuf []uintptr)
 	}
 
 	var u unwinder
-	u.initAt(pc, sp, 0, gp, unwindSilentErrors|unwindFramePointer)
+	u.initAt(pc, sp, 0, gp, unwindSilentErrors) // TODO: this can race with stack shrinking, so for the time being we can't use frame pointers here
 	n := tracebackPCs(&u, 0, pcbuf)
 	r.Stack = make([]uintptr, n)
 	copy(r.Stack, pcbuf)

@@ -144,7 +144,7 @@ func xRegScan(gp *g, gcw *gcWork, state *stackScanState) {
 	// Regular async preemption always provides the extended register state.
 	if gp.xRegs.state == nil {
 		var u unwinder
-		for u.init(gp, 0); u.valid(); u.next() {
+		for u.init(gp, unwindFramePointer); u.valid(); u.next() {
 			if u.frame.fn.valid() && u.frame.fn.funcID == abi.FuncID_debugCallV2 {
 				return
 			}

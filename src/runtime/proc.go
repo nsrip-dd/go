@@ -1006,7 +1006,7 @@ func mcommoninit(mp *m, id int64) {
 
 	// g0 stack won't make sense for user (and is not necessary unwindable).
 	if gp != gp.m.g0 {
-		callersFP(1, mp.createstack[:])
+		callers(1, mp.createstack[:])
 	}
 
 	lock(&sched.lock)
@@ -5490,7 +5490,7 @@ func saveAncestors(callergp *g) *[]ancestorInfo {
 	copy(ancestors[1:], callerAncestors)
 
 	var pcs [tracebackInnerFrames]uintptr
-	npcs := gcallersFP(callergp, 0, pcs[:])
+	npcs := gcallers(callergp, 0, pcs[:])
 	ipcs := make([]uintptr, npcs)
 	copy(ipcs, pcs[:])
 	ancestors[0] = ancestorInfo{

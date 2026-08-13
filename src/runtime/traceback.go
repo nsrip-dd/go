@@ -80,7 +80,7 @@ const (
 )
 
 // TODO
-const debugUnwinderFramePointerDerivation = false
+const debugUnwinderFramePointerDerivation = true
 
 // An unwinder iterates the physical stack frames of a Go sack.
 //
@@ -243,7 +243,16 @@ func (u *unwinder) initAt(pc0, sp0, lr0 uintptr, gp *g, flags unwindFlags) {
 	}
 
 	isSyscall := frame.pc == pc0 && frame.sp == sp0 && pc0 == gp.syscallpc && sp0 == gp.syscallsp
-
+	if debugUnwinderFramePointerDerivation && flags&unwindFramePointer != 0 {
+		d := dlog()
+		d.s("=== INIT [u=").hex(uint64(uintptr(unsafe.Pointer(u)))).s("]")
+		d.s("| goid:").hex(uint64(gp.goid))
+		d.s("| seed pc:").hex(uint64(frame.pc))
+		d.s("| seed sp:").hex(uint64(frame.sp))
+		d.s("| sched.pc:").hex(uint64(gp.sched.pc))
+		d.s("| sched.bp:").hex(uint64(gp.sched.bp))
+		d.end()
+	}
 	u.resolveInternal(true, isSyscall)
 }
 
@@ -420,11 +429,31 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 		
 		if debugUnwinderFramePointerDerivation && u.flags&unwindFramePointer != 0 {
 			spDeltaFP := frame.sp + uintptr(funcspdelta(f, frame.pc))
+			d := dlog()
+			d.s("[u=").hex(uint64(uintptr(unsafe.Pointer(u)))).s("]")
+			d.s("| goid:").hex(uint64(gp.goid))
+			d.s("unwind frame:").s(funcname(f))
+			d.s("| pc:").hex(uint64(frame.pc))
+			d.s("| sp:").hex(uint64(frame.sp))
+			d.s("| fp(ptr):").hex(uint64(frame.fp))
+			d.s("| fp(table):").hex(uint64(spDeltaFP))
+			d.s("| match:").b(frame.fp == spDeltaFP)
+			d.end()
 
 			if frame.fp != spDeltaFP {
-				println("wanted:", hex(spDeltaFP), "got:", hex(frame.fp))
+				d := dlog()
+				d.s("  !! FP mismatch for").s(funcname(f))
+				d.s("got").hex(uint64(frame.fp))
+				d.s("want").hex(uint64(spDeltaFP))
+				d.end()
 				throw("FP mismatch")
+				//breakpoint()
+				//frame.fp = spDeltaFP
 			}
+			// if frame.fp != spDeltaFP {
+			// 	println("wanted:", hex(spDeltaFP), "got:", hex(frame.fp))
+			// 	throw("FP mismatch")
+			// }
 		}
 		
 		if !usesLR {
@@ -1224,19 +1253,6 @@ func callers(skip int, pcbuf []uintptr) int {
 	var n int
 	systemstack(func() {
 		var u unwinder
-		u.initAt(pc, sp, 0, gp, unwindSilentErrors)
-		n = tracebackPCs(&u, skip, pcbuf)
-	})
-	return n
-}
-
-func callersFP(skip int, pcbuf []uintptr) int {
-	sp := sys.GetCallerSP()
-	pc := sys.GetCallerPC()
-	gp := getg()
-	var n int
-	systemstack(func() {
-		var u unwinder
 		u.initAt(pc, sp, 0, gp, unwindSilentErrors|unwindFramePointer)
 		n = tracebackPCs(&u, skip, pcbuf)
 	})
@@ -1244,12 +1260,6 @@ func callersFP(skip int, pcbuf []uintptr) int {
 }
 
 func gcallers(gp *g, skip int, pcbuf []uintptr) int {
-	var u unwinder
-	u.init(gp, unwindSilentErrors)
-	return tracebackPCs(&u, skip, pcbuf)
-}
-
-func gcallersFP(gp *g, skip int, pcbuf []uintptr) int {
 	var u unwinder
 	u.init(gp, unwindSilentErrors|unwindFramePointer)
 	return tracebackPCs(&u, skip, pcbuf)

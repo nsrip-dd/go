@@ -1002,7 +1002,7 @@ func copystack(gp *g, newsize uintptr) {
 
 	// Adjust pointers in the new stack.
 	var u unwinder
-	for u.init(gp, 0); u.valid(); u.next() {
+	for u.init(gp, unwindFramePointer); u.valid(); u.next() {
 		adjustframe(&u.frame, &adjinfo)
 	}
 

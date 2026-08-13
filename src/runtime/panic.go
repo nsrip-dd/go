@@ -1726,7 +1726,7 @@ func dumpPanicDeferState(where string, gp *g) {
 		p := gp._panic
 		d := gp._defer
 		var u unwinder
-		for u.init(gp, 0); u.valid(); u.next() {
+		for u.init(gp, unwindFramePointer); u.valid(); u.next() {
 			// Print frame.
 			println("  frame sp=", hex(u.frame.sp), "fp=", hex(u.frame.fp), "pc=", pcName(u.frame.pc), "+", pcOff(u.frame.pc))
 			// Print panic.
