@@ -79,7 +79,9 @@ const (
 	unwindFramePointer
 )
 
-// TODO
+// debugUnwinderFramePointerDerivation is a debugging flag that checks the spdelta table
+// every frame to compare the derived frame pointer with the actual frame pointer and 
+// throws and error when there is a mismatch. It is only used when unwindFramePointer is set.
 const debugUnwinderFramePointerDerivation = true
 
 // An unwinder iterates the physical stack frames of a Go sack.
@@ -408,10 +410,10 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 				// record on g0. Only possible while unwinding g0.
 				callerIsSystemstack(gp, frame.sp)
 			if !useTable {
+				// If we are on arm64, an injected call will have a extra 2-word gap in between the frame pointer and the stack pointer. 
 				if goarch.ArchFamily == goarch.ARM64 && isInjectedCall(f.funcID) {
 					newFP -= 2 * goarch.PtrSize
 				}
-				// TODO explain
 				frame.fp = newFP + goarch.PtrSize
 			} else {
 				// If we see frame pointer 0 then we're at the first call. (TODO: true for arm64?)
